@@ -36,11 +36,11 @@ export default function StoryModal({ story, isOpen, onClose }: StoryModalProps) 
 
           {/* Modal */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            initial={{ opacity: 0, x: 100 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 100 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl max-h-[80vh] overflow-y-auto z-50 p-4"
+            className="fixed top-20 right-8 w-full max-w-xl max-h-[85vh] overflow-y-auto z-50"
           >
             <div className="bg-[#0a1128]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-2xl">
               {/* Close button */}

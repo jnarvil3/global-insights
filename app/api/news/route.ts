@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { NewsAggregator } from '@/lib/newsAggregator';
 import type { GeolocatedStory } from '@/lib/types';
 
-// Mock news data for demo (in production, fetch from NewsAPI or RSS)
+// Mock news data for demo fallback (when no API keys provided)
 const mockNews: GeolocatedStory[] = [
   {
     title: 'Climate Summit Reaches Historic Agreement',
@@ -103,25 +104,130 @@ const mockNews: GeolocatedStory[] = [
 
 export async function GET(request: NextRequest) {
   try {
-    // In production, this would:
-    // 1. Fetch from NewsAPI or RSS feeds
-    // 2. Cache in Redis with 10min TTL
-    // 3. Return aggregated and deduplicated stories
+    const { searchParams } = new URL(request.url);
+    const refresh = searchParams.get('refresh') === 'true';
+    const stream = searchParams.get('stream') === 'true';
 
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Check for API keys in environment variables
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const newsAPIKey = process.env.NEWS_API_KEY;
 
+    // If no OpenAI key, fall back to mock data
+    if (!openaiKey) {
+      console.warn('No OPENAI_API_KEY found, using mock data');
+
+      // Stream mock data if requested
+      if (stream) {
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+          async start(controller) {
+            // Send stories one at a time with delays to simulate progressive loading
+            for (const story of mockNews) {
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'story', data: story }) + '\n')
+              );
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            controller.enqueue(
+              encoder.encode(JSON.stringify({
+                type: 'complete',
+                data: {
+                  count: mockNews.length,
+                  lastUpdated: new Date().toISOString(),
+                  mode: 'mock'
+                }
+              }) + '\n')
+            );
+            controller.close();
+          },
+        });
+
+        return new Response(readable, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return NextResponse.json({
+        success: true,
+        stories: mockNews,
+        count: mockNews.length,
+        lastUpdated: new Date().toISOString(),
+        mode: 'mock',
+      });
+    }
+
+    // Use real news aggregator
+    const aggregator = new NewsAggregator(openaiKey, newsAPIKey);
+
+    // Stream stories if requested
+    if (stream) {
+      const encoder = new TextEncoder();
+      const readable = new ReadableStream({
+        async start(controller) {
+          try {
+            await aggregator.aggregateNewsStreaming(!refresh, (story) => {
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: 'story', data: story }) + '\n')
+              );
+            });
+
+            controller.enqueue(
+              encoder.encode(JSON.stringify({
+                type: 'complete',
+                data: {
+                  lastUpdated: new Date().toISOString(),
+                  mode: 'live'
+                }
+              }) + '\n')
+            );
+            controller.close();
+          } catch (error) {
+            controller.enqueue(
+              encoder.encode(JSON.stringify({
+                type: 'error',
+                data: { message: error instanceof Error ? error.message : 'Unknown error' }
+              }) + '\n')
+            );
+            controller.close();
+          }
+        },
+      });
+
+      return new Response(readable, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+
+    // Non-streaming fallback
+    const stories = await aggregator.aggregateNews(!refresh);
+
+    return NextResponse.json({
+      success: true,
+      stories,
+      count: stories.length,
+      lastUpdated: new Date().toISOString(),
+      mode: 'live',
+    });
+  } catch (error) {
+    console.error('Error fetching news:', error);
+
+    // Fall back to mock data on error
     return NextResponse.json({
       success: true,
       stories: mockNews,
       count: mockNews.length,
       lastUpdated: new Date().toISOString(),
+      mode: 'mock-fallback',
+      error: error instanceof Error ? error.message : 'Unknown error',
     });
-  } catch (error) {
-    console.error('Error fetching news:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch news' },
-      { status: 500 }
-    );
   }
 }

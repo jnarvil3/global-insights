@@ -25,15 +25,65 @@ export default function Home() {
   const fetchNews = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/news');
-      const data = await response.json();
 
-      if (data.success) {
-        setStories(data.stories);
+      // Use streaming API for progressive loading
+      const response = await fetch('/api/news?stream=true');
+
+      if (!response.body) {
+        // Fallback to non-streaming
+        const data = await response.json();
+        if (data.success) {
+          setStories(data.stories);
+        }
+        setIsLoading(false);
+        return;
       }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const loadedStories: GeolocatedStory[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        // Decode the chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          try {
+            const message = JSON.parse(line);
+
+            if (message.type === 'story') {
+              loadedStories.push(message.data);
+              setStories([...loadedStories]); // Update state with new story
+
+              // Hide loading overlay after first story
+              if (loadedStories.length === 1) {
+                setIsLoading(false);
+              }
+            } else if (message.type === 'complete') {
+              console.log('Streaming complete:', message.data);
+            } else if (message.type === 'error') {
+              console.error('Streaming error:', message.data);
+            }
+          } catch (e) {
+            console.error('Error parsing message:', e);
+          }
+        }
+      }
+
+      setIsLoading(false);
     } catch (error) {
       console.error('Error fetching news:', error);
-    } finally {
       setIsLoading(false);
     }
   };
